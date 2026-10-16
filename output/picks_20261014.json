@@ -1,0 +1,102 @@
+{
+  "trade_date": "2026-10-14",
+  "generated_at": "2026-10-16T17:36:33",
+  "count": 4,
+  "status": "complete",
+  "data_errors": {},
+  "funnel": {
+    "低位首阳必买": {
+      "涨停池": 63,
+      "流通市值": 51,
+      "首板": 43,
+      "量价": 0,
+      "波动": 0,
+      "竞价": 0
+    },
+    "打板": {
+      "昨日主板涨停": 63,
+      "市场最高连板": 3,
+      "情绪空仓": 1,
+      "竞价": 0
+    },
+    "竞价量比": {
+      "昨日主板涨停": 63,
+      "昨日涨幅大于7": 63,
+      "去极端涨停": 63,
+      "去五日波动": 63,
+      "去五日连板": 63,
+      "近100日高": 27,
+      "竞价": 4
+    }
+  },
+  "picks": [
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-14",
+      "code": "603968",
+      "name": "醋化股份",
+      "score": 0.10150431579342974,
+      "prev_close": 14.36,
+      "auction_price": 15.07,
+      "auction_change_pct": 4.944289693593329,
+      "auction_volume": 29196.0,
+      "auction_volume_ratio": 0.10150431579342974,
+      "auction_timestamp": "2026-10-14T09:25:00",
+      "turnover_pct": 14.066563606262207,
+      "consecutive_boards": 2,
+      "matched_rule": "D",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    },
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-14",
+      "code": "000715",
+      "name": "中兴商业",
+      "score": 0.061158569524623174,
+      "prev_close": 5.78,
+      "auction_price": 5.95,
+      "auction_change_pct": 2.941176470588225,
+      "auction_volume": 16870.0,
+      "auction_volume_ratio": 0.061158569524623174,
+      "auction_timestamp": "2026-10-14T09:25:00",
+      "turnover_pct": 5.673029899597168,
+      "consecutive_boards": 1,
+      "matched_rule": "E",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    },
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-14",
+      "code": "002322",
+      "name": "理工能科",
+      "score": 0.05255571629561658,
+      "prev_close": 13.08,
+      "auction_price": 13.11,
+      "auction_change_pct": 0.2293577981651307,
+      "auction_volume": 12964.0,
+      "auction_volume_ratio": 0.05255571629561658,
+      "auction_timestamp": "2026-10-14T09:25:00",
+      "turnover_pct": 7.020061016082764,
+      "consecutive_boards": 1,
+      "matched_rule": "E",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    },
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-14",
+      "code": "603099",
+      "name": "长白山",
+      "score": 0.03770481406595001,
+      "prev_close": 45.85,
+      "auction_price": 46.8,
+      "auction_change_pct": 2.071973827699014,
+      "auction_volume": 9102.22,
+      "auction_volume_ratio": 0.03770481406595001,
+      "auction_timestamp": "2026-10-14T09:25:00",
+      "turnover_pct": 8.86367416381836,
+      "consecutive_boards": 1,
+      "matched_rule": "E",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    }
+  ]
+}

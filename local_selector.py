@@ -5,7 +5,8 @@
     在竞价结束后运行三份聚宽策略的选股部分，只输出候选股票，不执行任何交易。
 
 默认数据源：
-    AkShare -> 东方财富日线、涨停池和盘前分时数据。
+    AkShare -> 东方财富/新浪日线、东方财富涨停池和盘前分时数据。
+    新浪逐笔成交 -> 东方财富竞价不可用时的备用数据。
 
 说明：
     聚宽的 valuation、概念和证券状态接口没有直接的本地等价物。
@@ -31,6 +32,7 @@ from typing import Any, Iterable, Sequence
 import akshare as ak
 import numpy as np
 import pandas as pd
+import requests
 
 
 LOGGER = logging.getLogger("local_selector")
@@ -161,10 +163,16 @@ class AkshareProvider:
         cache_dir: Path,
         request_interval: float = 0.15,
         refresh: bool = False,
+        daily_source: str = "auto",
+        auction_source: str = "auto",
     ) -> None:
         self.cache = Cache(cache_dir, refresh=refresh)
         self.request_interval = request_interval
         self._last_request = 0.0
+        self.daily_source = daily_source
+        self._active_daily_source = "eastmoney" if daily_source == "auto" else daily_source
+        self.auction_source = auction_source
+        self._active_auction_source = "eastmoney" if auction_source == "auto" else auction_source
 
     def _call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         last_error: Exception | None = None
@@ -180,6 +188,7 @@ class AkshareProvider:
                 last_error = exc
                 self._last_request = time_module.monotonic()
                 if attempt < 2:
+                    LOGGER.debug("%s 请求失败，第 %s 次重试: %s", getattr(func, "__name__", func), attempt + 1, exc)
                     time_module.sleep(1.0 * (attempt + 1))
         raise RuntimeError(
             f"数据请求失败: {getattr(func, '__name__', func)}: {last_error}"
@@ -230,14 +239,33 @@ class AkshareProvider:
         key = f"daily_{code}_{end_date:%Y%m%d}_full"
         cached = self.cache.read(key)
         if cached is None:
-            result = self._call(
-                ak.stock_zh_a_hist,
-                symbol=code,
-                start_date=cache_start_date.strftime("%Y%m%d"),
-                end_date=end_date.strftime("%Y%m%d"),
-                adjust="",
-            )
+            kwargs = {
+                "start_date": cache_start_date.strftime("%Y%m%d"),
+                "end_date": end_date.strftime("%Y%m%d"),
+                "adjust": "",
+            }
+            if self._active_daily_source == "eastmoney":
+                try:
+                    result = self._call(ak.stock_zh_a_hist, symbol=code, timeout=15, **kwargs)
+                    if result is None or result.empty:
+                        raise RuntimeError(f"东方财富未返回 {code} 的日线")
+                except RuntimeError as exc:
+                    if self.daily_source != "auto":
+                        raise
+                    LOGGER.warning("东方财富日线不可用，当前运行切换至新浪: %s", exc)
+                    self._active_daily_source = "sina"
+            if self._active_daily_source == "sina":
+                symbol = ("sh" if code.startswith("6") else "sz") + code
+                result = self._call(ak.stock_zh_a_daily, symbol=symbol, **kwargs)
+                if result is None or result.empty:
+                    raise RuntimeError(f"新浪未返回 {code} 的日线")
+                result = result.copy()
+                # 新浪为股/比例，统一到东方财富的手/百分数；成交额均为元。
+                result["volume"] = pd.to_numeric(result["volume"], errors="coerce") / 100
+                result["turnover"] = pd.to_numeric(result["turnover"], errors="coerce") * 100
             cached = self._normalize_daily(result, code)
+            if cached.empty:
+                raise RuntimeError(f"{code} 日线无有效日期，不写入缓存")
             self.cache.write(key, cached)
         return cached.tail(count).reset_index(drop=True)
 
@@ -268,26 +296,96 @@ class AkshareProvider:
         result["code"] = code
         return result[required + ["code"]].dropna(subset=["date"]).sort_values("date")
 
+    @staticmethod
+    def _sina_auction(code: str, trade_date: date) -> pd.DataFrame:
+        symbol = ("sh" if code.startswith("6") else "sz") + code
+        response = requests.get(
+            "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_Bill.GetBillList",
+            params={
+                "symbol": symbol, "num": "60", "page": "1", "sort": "ticktime",
+                "asc": "1", "volume": "0", "amount": "0", "type": "0",
+                "day": trade_date.isoformat(),
+            },
+            headers={
+                "Referer": f"https://vip.stock.finance.sina.com.cn/quotes_service/view/cn_bill.php?symbol={symbol}",
+                "User-Agent": "Mozilla/5.0",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        records = response.json()
+        if not isinstance(records, list) or not records:
+            raise RuntimeError(f"新浪未返回 {code} 在 {trade_date} 的逐笔成交")
+        data = pd.DataFrame(records)
+        if not {"symbol", "ticktime", "price", "volume"}.issubset(data.columns):
+            raise RuntimeError(f"新浪 {code} 逐笔成交缺少必要字段")
+        if not data["symbol"].eq(symbol).all():
+            raise RuntimeError(f"新浪返回的股票代码与 {symbol} 不符")
+        data["时间"] = pd.to_datetime(
+            trade_date.isoformat() + " " + data["ticktime"], errors="coerce"
+        )
+        if data["时间"].isna().any():
+            raise RuntimeError(f"新浪 {code} 逐笔成交时间无效")
+        cutoff = pd.Timestamp(f"{trade_date} 09:26:00")
+        # 首页必须覆盖竞价结束，避免只拿到部分竞价成交量。
+        if len(data) >= 60 and data["时间"].max() <= cutoff:
+            raise RuntimeError(f"新浪 {code} 首屏未覆盖竞价结束，无法确认完整竞价量")
+        data = data[data["时间"].between(pd.Timestamp(f"{trade_date} 09:25:00"), cutoff)].copy()
+        if data.empty:
+            raise RuntimeError(f"新浪 {code} 无 {trade_date} 的 09:25~09:26 竞价成交")
+        for column in ("price", "volume"):
+            data[column] = pd.to_numeric(data[column], errors="coerce")
+            if not (np.isfinite(data[column]) & (data[column] > 0)).all():
+                raise RuntimeError(f"新浪 {code} 竞价成交的 {column} 无效")
+        data = data.sort_values("时间")
+        return pd.DataFrame([{
+            "时间": data.iloc[-1]["时间"],
+            "收盘": data.iloc[-1]["price"],
+            "成交量": data["volume"].sum() / 100,
+            "成交额": (data["price"] * data["volume"]).sum(),
+        }])
+
     def auction(self, code: str, trade_date: date) -> Auction | None:
+        code = clean_code(code)
         key = f"auction_{clean_code(code)}_{trade_date:%Y%m%d}"
         cached = self.cache.read(key)
         if cached is None:
-            result = self._call(
-                ak.stock_zh_a_hist_pre_min_em,
-                symbol=clean_code(code),
-                start_time="09:15:00",
-                end_time="09:26:00",
-            )
-            cached = result if result is not None else pd.DataFrame()
-            self.cache.write(key, cached)
+            if self._active_auction_source == "eastmoney":
+                try:
+                    cached = self._call(
+                        ak.stock_zh_a_hist_pre_min_em,
+                        symbol=code,
+                        start_time="09:15:00",
+                        end_time="09:26:00",
+                    )
+                    if cached is None or cached.empty:
+                        raise RuntimeError(f"东方财富未返回 {code} 的竞价数据")
+                    dates = pd.to_datetime(cached["时间"], errors="coerce").dt.date
+                    if not dates.eq(trade_date).any():
+                        raise RuntimeError(f"东方财富未返回 {code} 在 {trade_date} 的竞价，仅提供最近交易日数据")
+                except RuntimeError as exc:
+                    if self.auction_source != "auto":
+                        raise
+                    LOGGER.warning("东方财富竞价不可用，当前运行切换至新浪逐笔成交: %s", exc)
+                    self._active_auction_source = "sina"
+            if self._active_auction_source == "sina":
+                cached = self._call(self._sina_auction, code, trade_date)
         if cached is None or cached.empty:
-            return None
+            raise RuntimeError(f"{code} 竞价接口未返回数据")
         data = cached.copy()
         data["时间"] = pd.to_datetime(data["时间"], errors="coerce")
+        available_dates = data["时间"].dropna().dt.date.unique()
+        data = data[data["时间"].dt.date == trade_date]
         data = data[data["时间"].dt.time <= datetime.strptime("09:26:00", "%H:%M:%S").time()]
         data = data.dropna(subset=["时间"]).sort_values("时间")
         if data.empty:
-            return None
+            raise RuntimeError(
+                f"{code} 无 {trade_date} 的 09:26 前竞价数据，接口数据日期为 "
+                f"{', '.join(str(value) for value in available_dates) or '无'}；"
+                "东方财富仅返回最近交易日；可尝试 --auction-source sina，"
+                "历史逐笔也不可用时需已有当日缓存"
+            )
+        self.cache.write(key, data)
         row = data.iloc[-1]
         # 09:26 行的“收盘”是该分钟最终成交价；“最新价”可能是接口快照字段。
         price = to_float(row.get("收盘"), to_float(row.get("最新价")))
@@ -309,6 +407,7 @@ class Selector:
     def __init__(self, provider: AkshareProvider) -> None:
         self.provider = provider
         self.funnel: dict[str, dict[str, int]] = {}
+        self.data_errors: dict[str, str] = {}
 
     def _log_funnel(self, strategy: str, **values: int) -> None:
         self.funnel[strategy] = values
@@ -343,6 +442,7 @@ class Selector:
         try:
             return self.provider.daily_history(code, previous_day, count=count)
         except RuntimeError as exc:
+            self.data_errors[f"daily:{code}"] = str(exc)
             LOGGER.warning("跳过历史数据失败的股票 %s: %s", code, exc)
             return pd.DataFrame()
 
@@ -405,6 +505,7 @@ class Selector:
         try:
             auction = self.provider.auction(code, trade_date)
         except RuntimeError as exc:
+            self.data_errors[f"auction:{code}"] = str(exc)
             LOGGER.warning("跳过竞价数据失败的股票 %s: %s", code, exc)
             return previous_close, None, float("nan")
         ratio = auction.volume / previous_volume if auction and previous_volume > 0 else float("nan")
@@ -750,7 +851,7 @@ class Selector:
         return sorted(result, key=lambda item: (item.strategy, -item.score, item.code))
 
 
-def write_results(picks: list[Pick], funnel: dict[str, dict[str, int]], output_dir: Path, trade_date: date) -> tuple[Path, Path]:
+def write_results(picks: list[Pick], funnel: dict[str, dict[str, int]], output_dir: Path, trade_date: date, data_errors: dict[str, str] | None = None) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = output_dir / f"picks_{trade_date:%Y%m%d}"
     csv_path = stem.with_suffix(".csv")
@@ -768,6 +869,8 @@ def write_results(picks: list[Pick], funnel: dict[str, dict[str, int]], output_d
         "trade_date": trade_date.isoformat(),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "count": len(picks),
+        "status": "incomplete" if data_errors else "complete",
+        "data_errors": data_errors or {},
         "funnel": funnel,
         "picks": [json_safe(asdict(pick)) for pick in picks],
     }
@@ -788,6 +891,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", default="cache", help="行情缓存目录")
     parser.add_argument("--output-dir", default="output", help="CSV/JSON 输出目录")
     parser.add_argument("--request-interval", type=float, default=0.50, help="请求间隔秒数")
+    parser.add_argument("--daily-source", choices=["auto", "eastmoney", "sina"], default="auto", help="日线来源，auto 在东方财富失败后切换新浪")
+    parser.add_argument("--auction-source", choices=["auto", "eastmoney", "sina"], default="auto", help="竞价来源，auto 在东方财富失败后切换新浪 09:25 逐笔成交")
     parser.add_argument("--refresh", action="store_true", help="忽略缓存，重新拉取行情")
     parser.add_argument("--verbose", action="store_true", help="输出详细日志")
     return parser
@@ -805,14 +910,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.cache_dir),
             request_interval=args.request_interval,
             refresh=args.refresh,
+            daily_source=args.daily_source,
+            auction_source=args.auction_source,
         )
         selector = Selector(provider)
         picks = selector.select_all(trade_date, args.strategy)
-        csv_path, json_path = write_results(picks, selector.funnel, Path(args.output_dir), trade_date)
+        csv_path, json_path = write_results(picks, selector.funnel, Path(args.output_dir), trade_date, selector.data_errors)
+        if selector.data_errors:
+            LOGGER.error("数据不完整：%s 项行情请求失败，结果仅供排查，不能据此判断无符合条件股票。详情见 JSON 的 data_errors。", len(selector.data_errors))
         print("\n选股结果")
         print("=" * 72)
         if not picks:
-            print("没有符合条件的股票。")
+            print("数据不完整，无法确认是否有符合条件的股票。" if selector.data_errors else "没有符合条件的股票。")
         else:
             for pick in picks:
                 print(
@@ -828,7 +937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\n选股漏斗")
         for strategy, values in selector.funnel.items():
             print(f"  {strategy}: " + ", ".join(f"{key}={value}" for key, value in values.items()))
-        return 0
+        return 2 if selector.data_errors else 0
     except Exception as exc:
         LOGGER.error("%s", exc)
         if args.verbose:

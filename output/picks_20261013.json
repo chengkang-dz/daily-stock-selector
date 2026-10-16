@@ -1,0 +1,75 @@
+{
+  "trade_date": "2026-10-13",
+  "generated_at": "2026-10-16T17:42:30",
+  "count": 2,
+  "status": "complete",
+  "data_errors": {},
+  "funnel": {
+    "低位首阳必买": {
+      "涨停池": 39,
+      "流通市值": 29,
+      "首板": 13,
+      "量价": 1,
+      "波动": 1,
+      "竞价": 0
+    },
+    "打板": {
+      "昨日主板涨停": 39,
+      "市场最高连板": 10,
+      "MA多头": 25,
+      "涨停": 25,
+      "三板以内": 22,
+      "年涨停大于10": 4,
+      "换手5到15": 0,
+      "斜率大于2": 0,
+      "热点过滤": 0,
+      "竞价": 0,
+      "竞价剔除": 0
+    },
+    "竞价量比": {
+      "昨日主板涨停": 39,
+      "昨日涨幅大于7": 39,
+      "去极端涨停": 36,
+      "去五日波动": 36,
+      "去五日连板": 36,
+      "近100日高": 15,
+      "竞价": 2
+    }
+  },
+  "picks": [
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-13",
+      "code": "002264",
+      "name": "新 华 都",
+      "score": 0.05272341276287275,
+      "prev_close": 8.14,
+      "auction_price": 8.3,
+      "auction_change_pct": 1.9656019656019597,
+      "auction_volume": 74483.0,
+      "auction_volume_ratio": 0.05272341276287275,
+      "auction_timestamp": "2026-10-13T09:25:00",
+      "turnover_pct": 21.703718185424805,
+      "consecutive_boards": 1,
+      "matched_rule": "E",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    },
+    {
+      "strategy": "竞价量比",
+      "trade_date": "2026-10-13",
+      "code": "601811",
+      "name": "新华文轩",
+      "score": 0.03805758783908641,
+      "prev_close": 23.0,
+      "auction_price": 23.02,
+      "auction_change_pct": 0.08695652173913437,
+      "auction_volume": 21903.0,
+      "auction_volume_ratio": 0.03805758783908641,
+      "auction_timestamp": "2026-10-13T09:25:00",
+      "turnover_pct": 7.267580509185791,
+      "consecutive_boards": 2,
+      "matched_rule": "E",
+      "notes": "原策略 C/D/E/F 竞价规则；候选范围按昨日涨停池收敛"
+    }
+  ]
+}

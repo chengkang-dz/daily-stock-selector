@@ -27,6 +27,8 @@ python .\local_selector.py --date 2026-08-17
 python .\local_selector.py --strategy 低位首阳必买
 python .\local_selector.py --strategy 打板 竞价量比
 python .\local_selector.py --refresh
+python .\local_selector.py --daily-source sina
+python .\local_selector.py --daily-source sina --auction-source sina
 ```
 
 结果文件：
@@ -46,6 +48,24 @@ python .\local_selector.py --refresh
 
 ## 注意事项
 
-1. 必须在竞价结束后运行，程序读取 09:26 盘前分时的最后一条记录；如需忽略历史缓存并重新拉取，使用 `--refresh`。
-2. AkShare 和上游行情接口可能临时限流；遇到请求失败可稍后重试，缓存不会覆盖成功数据。
+1. 必须在竞价结束后运行。东方财富源读取 09:26 前盘前分时的最后一条记录；新浪源读取 09:25~09:26 的实际逐笔成交，取最后成交价、合计成交量，并将股转换成手，成交额按价格乘股数合计。如需忽略历史缓存并重新拉取，使用 `--refresh`。
+2. 日线默认先请求东方财富，连续三次失败或返回空数据后，本次运行自动切换新浪。也可通过 `--daily-source sina` 直接使用新浪，或 `--daily-source eastmoney` 只用东方财富。新浪成交量和换手率会转换成原有的手、百分数单位。
 3. 输出结果是策略条件的机械筛选，不代表投资建议；原聚宽策略中的买入价格、仓位、卖出和风控逻辑均已移除。
+
+## 接口失败排查
+
+若日志出现 `stock_zh_a_hist` / `RemoteDisconnected('Remote end closed connection without response')`，表示东方财富日线连接被远端或网络链路断开；这不能单凭错误判断为限流。2026-10-16 本机复现时，新浪日线可用，东方财富涨停池可用，盘前分时出现间歇性断连。
+
+建议先执行：
+
+```powershell
+python .\local_selector.py --daily-source sina --auction-source sina --verbose
+```
+
+先保留 `cache/`，不要用 `--refresh` 反复请求。程序会优先复用成功缓存；新浪同样可能受上游访问限制，请保留默认请求间隔。
+
+`--daily-source sina` 只影响日线，截图中的 `stock_zh_a_hist_pre_min_em` 是另一条竞价接口。竞价现默认也使用 `auto`：东方财富断连、空响应或日期不符后，本次运行切换至新浪逐笔成交；可用 `--auction-source sina` 直接使用新浪，或 `--auction-source eastmoney` 只使用东方财富。2026-10-16 本机已核对新浪 09:25 成交价与当日开盘价一致，按昨日查询会返回不同数据，未来日期返回空。若新浪也未提供指定日的竞价成交，仍会标为数据不完整，不使用 09:30 的成交替代。
+
+本机排查还发现 Clash TUN 正在运行，东方财富域名解析到了 `198.18.*` 虚拟地址；因此没有 HTTP/HTTPS 代理环境变量也不代表请求未经过代理。这只是网络线索，尚不能据此断定 Clash 是断连原因；程序未修改代理设置。
+
+只要本次筛选需要的日线或竞价请求有失败，JSON 中就会写入 `status: "incomplete"` 和 `data_errors`，进程退出码为 `2`，此时 CSV 可能只有部分候选，不能将空结果解释为“没有符合条件的股票”。完整执行的退出码为 `0`，整体执行异常为 `1`。空行情和日期不匹配的竞价响应不会新增成功缓存。
